@@ -1,5 +1,6 @@
-from bluetooth import BLE
 from collections import deque
+
+from bluetooth import BLE
 import machine
 from micropython import const, schedule
 
@@ -247,8 +248,13 @@ def gap_scan(duration_ms, interval_us=None, window_us=None):
 gatts_register_services = _ble.gatts_register_services
 gatts_read = _ble.gatts_read
 gatts_write = _ble.gatts_write
-gatts_notify = _ble.gatts_notify
 gatts_set_buffer = _ble.gatts_set_buffer
+
+
+def gatts_notify(conn_handle, handle, data=None):
+    if data is None:
+        return _ble.gatts_notify(conn_handle, handle)
+    return _ble.gatts_notify(conn_handle, handle, data)
 
 
 def active(change_to=None):
