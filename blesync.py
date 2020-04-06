@@ -197,7 +197,6 @@ _callbacks = {
 
 
 def _irq(event, data):
-    print('event ', event, data)
     print('_irq', _IRQ_STR[event], data)
     try:
         _IRQ_HANDLERS[event](data)
