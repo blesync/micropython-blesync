@@ -94,7 +94,8 @@ def _irq_gattc_characteristic_result(data):
     # Called for each characteristic found by gattc_discover_services().
     conn_handle, def_handle, value_handle, properties, uuid = data
     for (conn_handle, start_handle, end_handle), event_queue in _events[
-        _IRQ_GATTC_CHARACTERISTIC_RESULT].items():
+        _IRQ_GATTC_CHARACTERISTIC_RESULT
+    ].items():
         if start_handle <= def_handle <= end_handle:
             event_queue.append((def_handle, value_handle, properties, uuid))
 
@@ -137,6 +138,7 @@ def _irq_gatts_write(data):
 
 def _irq_gattc_notify(data):
     # A peripheral has sent a notify request.
+    # conn_handle, value_handle, notify_data = data
     _callback(_IRQ_GATTC_NOTIFY, data)
 
 
