@@ -44,7 +44,7 @@ def _register_callback(irq, callback):
     _callbacks[irq].append(callback)
 
 
-def _event(irq, data, *key):
+def _event(irq, data, key=None):
     _events[irq][key].append(data)
 
 
@@ -58,7 +58,7 @@ def _callback(irq, data):
     schedule(_call_callbacks, (irq, data))
 
 
-def _register_event(irq, *key, bufferlen=1):
+def _register_event(irq, key=None, bufferlen=1):
     _events[irq][key] = deque(tuple(), bufferlen)
 
 
@@ -75,13 +75,14 @@ def _irq_scan_complete(data):
 def _irq_peripheral_connect(data):
     # A successful gap_connect().
     conn_handle, addr_type, addr = data
-    _event(_IRQ_PERIPHERAL_CONNECT, conn_handle, addr_type, addr)
+    _event(_IRQ_PERIPHERAL_CONNECT, conn_handle, (addr_type, addr))
 
 
 def _irq_peripheral_disconnect(data):
     # Connected peripheral has disconnected.
     conn_handle, addr_type, addr = data
-    _event(_IRQ_PERIPHERAL_DISCONNECT, data, conn_handle, addr_type, addr)
+    _event(_IRQ_PERIPHERAL_DISCONNECT, data, (conn_handle, addr_type, addr))
+    _callback(_IRQ_PERIPHERAL_DISCONNECT, data)
 
 
 def _irq_gattc_service_result(data):
@@ -109,13 +110,13 @@ def _irq_gattc_descriptor_result(data):
 def _irq_gattc_read_result(data):
     # A gattc_read() has completed.
     conn_handle, value_handle, char_data = data
-    _event(_IRQ_GATTC_READ_RESULT, data, conn_handle, value_handle)
+    _event(_IRQ_GATTC_READ_RESULT, data, (conn_handle, value_handle))
 
 
 def _irq_gattc_write_status(data):
     # A gattc_write() has completed.
     conn_handle, value_handle, status = data
-    _event(_IRQ_GATTC_WRITE_STATUS, data, conn_handle, value_handle)
+    _event(_IRQ_GATTC_WRITE_STATUS, data, (conn_handle, value_handle))
 
 
 def _irq_central_connect(data):
@@ -204,7 +205,7 @@ def _irq(event, data):
         pass
 
 
-def wait_for_event(irq, *key):  # , timeout_ms):
+def wait_for_event(irq, key=None):  # , timeout_ms):
     # t0 = time.ticks_ms()
 
     event_queue = _events[irq][key]
@@ -234,8 +235,8 @@ def gap_scan(duration_ms, interval_us=None, window_us=None):
     _register_event(_IRQ_SCAN_COMPLETE)
     _ble.gap_scan(duration_ms, *args)
 
-    scan_events_queue = _events[_IRQ_SCAN_RESULT][()]
-    scan_complete_queue = _events[_IRQ_SCAN_COMPLETE][()]
+    scan_events_queue = _events[_IRQ_SCAN_RESULT][None]
+    scan_complete_queue = _events[_IRQ_SCAN_COMPLETE][None]
 
     while True:  # time.ticks_diff(time.ticks_ms(), t0) < timeout_ms:
         while scan_events_queue:
@@ -267,13 +268,13 @@ def active(change_to=None):
 
 
 def gap_connect(addr_type, addr, scan_duration_ms=2000):
-    _register_event(_IRQ_PERIPHERAL_CONNECT, addr_type, addr)
+    _register_event(_IRQ_PERIPHERAL_CONNECT, (addr_type, addr))
     _ble.gap_connect(addr_type, addr, scan_duration_ms)
-    return wait_for_event(_IRQ_PERIPHERAL_CONNECT, addr_type, addr)
+    return wait_for_event(_IRQ_PERIPHERAL_CONNECT, (addr_type, addr))
 
 
 def gap_disconnect(conn_handle):
-    _register_event(_IRQ_PERIPHERAL_CONNECT, conn_handle)
+    _register_event(_IRQ_PERIPHERAL_DISCONNECT, conn_handle)
     _ble.gap_disconnect(conn_handle)
     return wait_for_event(_IRQ_PERIPHERAL_DISCONNECT, conn_handle)
 
@@ -282,7 +283,7 @@ def gattc_discover_services(conn_handle):
     _register_event(_IRQ_GATTC_SERVICE_RESULT, conn_handle, bufferlen=100)
     _ble.gattc_discover_services(conn_handle)
 
-    event_queue = _events[_IRQ_GATTC_SERVICE_RESULT][(conn_handle,)]
+    event_queue = _events[_IRQ_GATTC_SERVICE_RESULT][conn_handle]
     while True:
         while event_queue:
             start_handle, end_handle, uuid = event_queue.popleft()
@@ -295,9 +296,7 @@ def gattc_discover_services(conn_handle):
 def gattc_discover_characteristics(conn_handle, start_handle, end_handle):
     _register_event(
         _IRQ_GATTC_CHARACTERISTIC_RESULT,
-        conn_handle,
-        start_handle,
-        end_handle,
+        (conn_handle, start_handle, end_handle),
         bufferlen=100
     )
     _ble.gattc_discover_characteristics(conn_handle, start_handle, end_handle)
@@ -319,16 +318,16 @@ def gattc_discover_descriptors(conn_handle, start_handle, end_handle):
 
 
 def gattc_read(conn_handle, value_handle):
-    _register_event(_IRQ_GATTC_READ_RESULT, conn_handle, value_handle)
+    _register_event(_IRQ_GATTC_READ_RESULT, (conn_handle, value_handle))
     _ble.gattc_read(conn_handle, value_handle)
-    return wait_for_event(_IRQ_GATTC_READ_RESULT, conn_handle, value_handle)
+    return wait_for_event(_IRQ_GATTC_READ_RESULT, (conn_handle, value_handle))
 
 
 def gattc_write(conn_handle, value_handle, data, ack=False):
-    _register_event(_IRQ_GATTC_WRITE_STATUS, conn_handle, value_handle)
+    _register_event(_IRQ_GATTC_WRITE_STATUS, (conn_handle, value_handle))
     _ble.gattc_write(conn_handle, value_handle, data, ack)
     if ack:
-        return wait_for_event(_IRQ_GATTC_WRITE_STATUS, conn_handle, value_handle)
+        return wait_for_event(_IRQ_GATTC_WRITE_STATUS, (conn_handle, value_handle))
 
 
 def on_central_connect(callback):
@@ -337,6 +336,10 @@ def on_central_connect(callback):
 
 def on_central_disconnect(callback):
     _register_callback(_IRQ_CENTRAL_DISCONNECT, callback)
+
+
+def on_peripherial_disconnect(callback):
+    _register_callback(_IRQ_PERIPHERAL_DISCONNECT, callback)
 
 
 def on_gatts_write(callback):
