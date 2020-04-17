@@ -53,6 +53,7 @@ def _register_event(irq, key, bufferlen=1):
 #     _event(_IRQ_GATTS_READ_REQUEST, data, conn_handle)
 
 
+# [{} for _ in range(8)] 4 - 12
 _events = {
     _IRQ_SCAN_RESULT: {},
     _IRQ_SCAN_COMPLETE: {},
@@ -100,12 +101,12 @@ def _irq(event, data):
         conn_handle, addr_type, addr = data
         data = conn_handle
         key = addr_type, addr
-    elif _IRQ_GATTC_SERVICE_RESULT:
+    elif event == _IRQ_GATTC_SERVICE_RESULT:
         # Called for each service found by gattc_discover_services().
         conn_handle, start_handle, end_handle, uuid = data
         key = conn_handle
         data = start_handle, end_handle, uuid
-    elif _IRQ_GATTC_DESCRIPTOR_RESULT:
+    elif event == _IRQ_GATTC_DESCRIPTOR_RESULT:
         # Called for each descriptor found by gattc_discover_descriptors().
         conn_handle, dsc_handle, uuid = data
         key = conn_handle
