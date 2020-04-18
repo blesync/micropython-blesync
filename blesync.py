@@ -1,4 +1,5 @@
 from collections import deque
+import time
 
 from bluetooth import BLE
 import machine
@@ -53,7 +54,6 @@ def _register_event(irq, key, bufferlen=1):
 #     _event(_IRQ_GATTS_READ_REQUEST, data, conn_handle)
 
 
-# [{} for _ in range(8)] 4 - 12
 _events = {
     _IRQ_SCAN_RESULT: {},
     _IRQ_SCAN_COMPLETE: {},
@@ -99,8 +99,8 @@ def _irq(event, data):
     elif event == _IRQ_PERIPHERAL_CONNECT:
         # A successful gap_connect().
         conn_handle, addr_type, addr = data
-        data = conn_handle
         key = addr_type, addr
+        data = conn_handle
     elif event == _IRQ_GATTC_SERVICE_RESULT:
         # Called for each service found by gattc_discover_services().
         conn_handle, start_handle, end_handle, uuid = data
@@ -110,25 +110,38 @@ def _irq(event, data):
         # Called for each descriptor found by gattc_discover_descriptors().
         conn_handle, dsc_handle, uuid = data
         key = conn_handle
+        data = dsc_handle, uuid
     elif event == _IRQ_GATTC_READ_RESULT:
         # A gattc_read() has completed.
         conn_handle, value_handle, char_data = data
         key = conn_handle, value_handle
+        data = char_data
     elif event == _IRQ_GATTC_WRITE_STATUS:
         # A gattc_write() has completed.
         conn_handle, value_handle, status = data
         key = conn_handle, value_handle
+        data = status
     else:
         key = None
     _event(event, data, key)
 
 
-def wait_for_event(irq, key=None):  # , timeout_ms):
-    # t0 = time.ticks_ms()
+class EventTimeoutError(Exception):
+    pass
+
+
+def _maybe_raise_timeout(timeout_ms, start_time):
+    if timeout_ms and time.ticks_diff(time.ticks_ms(), start_time) > timeout_ms:
+        raise EventTimeoutError()
+
+
+def wait_for_event(irq, key, timeout_ms):
+    start_time = time.ticks_ms()
 
     event_queue = _events[irq][key]
 
-    while not event_queue:  # time.ticks_diff(time.ticks_ms(), t0) < timeout_ms:
+    while not event_queue:
+        _maybe_raise_timeout(timeout_ms, start_time)
         machine.idle()
 
     return event_queue.popleft()
@@ -144,9 +157,11 @@ gatts_set_buffer = _ble.gatts_set_buffer
 gap_disconnect = _ble.gap_disconnect
 
 
-def gap_scan(duration_ms, interval_us=None, window_us=None):
+def gap_scan(duration_ms, interval_us=None, window_us=None, timeout_ms=None):
     assert not (interval_us is None and window_us is not None), \
         "Argument window_us has to be specified if interval_us is specified"
+
+    start_time = time.ticks_ms()
 
     args = []
     if interval_us is not None:
@@ -161,13 +176,14 @@ def gap_scan(duration_ms, interval_us=None, window_us=None):
     scan_events_queue = _events[_IRQ_SCAN_RESULT][None]
     scan_complete_queue = _events[_IRQ_SCAN_COMPLETE][None]
 
-    while True:  # time.ticks_diff(time.ticks_ms(), t0) < timeout_ms:
+    while True:
         while scan_events_queue:
             yield scan_events_queue.popleft()
 
         if scan_complete_queue:
             scan_complete_queue.popleft()
             return
+        _maybe_raise_timeout(timeout_ms, start_time)
         machine.idle()
 
 
@@ -184,13 +200,14 @@ def active(change_to=None):
     return is_active
 
 
-def gap_connect(addr_type, addr, scan_duration_ms=2000):
+def gap_connect(addr_type, addr, scan_duration_ms=2000, timeout_ms=None):
     _register_event(_IRQ_PERIPHERAL_CONNECT, (addr_type, addr))
     _ble.gap_connect(addr_type, addr, scan_duration_ms)
-    return wait_for_event(_IRQ_PERIPHERAL_CONNECT, (addr_type, addr))
+    return wait_for_event(_IRQ_PERIPHERAL_CONNECT, (addr_type, addr), timeout_ms)
 
 
-def gattc_discover_services(conn_handle):
+def gattc_discover_services(conn_handle, timeout_ms=None):
+    start_time = time.ticks_ms()
     _register_event(_IRQ_GATTC_SERVICE_RESULT, conn_handle, bufferlen=100)
     _ble.gattc_discover_services(conn_handle)
 
@@ -201,10 +218,17 @@ def gattc_discover_services(conn_handle):
             yield start_handle, end_handle, uuid
             if end_handle == 65535:
                 return
+        _maybe_raise_timeout(timeout_ms, start_time)
         machine.idle()
 
 
-def gattc_discover_characteristics(conn_handle, start_handle, end_handle):
+def gattc_discover_characteristics(
+    conn_handle,
+    start_handle,
+    end_handle,
+    timeout_ms=None
+):
+    start_time = time.ticks_ms()
     _register_event(
         _IRQ_GATTC_CHARACTERISTIC_RESULT,
         (conn_handle, start_handle, end_handle),
@@ -220,26 +244,38 @@ def gattc_discover_characteristics(conn_handle, start_handle, end_handle):
             yield def_handle, value_handle, properties, uuid
             if value_handle == end_handle:
                 return
+        _maybe_raise_timeout(timeout_ms, start_time)
         machine.idle()
 
 
 def gattc_discover_descriptors(conn_handle, start_handle, end_handle):
     # TODO
-    _ble.gattc_discover_descriptors(conn_handle, start_handle, end_handle)
+    # _ble.gattc_discover_descriptors(conn_handle, start_handle, end_handle)
+    raise NotImplementedError
 
 
-def gattc_read(conn_handle, value_handle):
+def gattc_read(conn_handle, value_handle, timeout_ms=None):
     # conn_handle, value_handle, char_data
     _register_event(_IRQ_GATTC_READ_RESULT, (conn_handle, value_handle))
     _ble.gattc_read(conn_handle, value_handle)
-    return wait_for_event(_IRQ_GATTC_READ_RESULT, (conn_handle, value_handle))
+    return wait_for_event(
+        _IRQ_GATTC_READ_RESULT,
+        (conn_handle, value_handle),
+        timeout_ms
+    )
 
 
-def gattc_write(conn_handle, value_handle, data, ack=False):
+def gattc_write(conn_handle, value_handle, data, ack=False, timeout_ms=None):
+    # wait for return status of write if ack is True
+    # otherwise return None immediately
     _register_event(_IRQ_GATTC_WRITE_STATUS, (conn_handle, value_handle))
     _ble.gattc_write(conn_handle, value_handle, data, ack)
     if ack:
-        return wait_for_event(_IRQ_GATTC_WRITE_STATUS, (conn_handle, value_handle))
+        return wait_for_event(
+            _IRQ_GATTC_WRITE_STATUS,
+            (conn_handle, value_handle),
+            timeout_ms
+        )
 
 
 def on_central_connect(callback):
