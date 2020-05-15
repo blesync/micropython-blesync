@@ -45,7 +45,7 @@ def _register_event(irq, key, bufferlen=1):
     _events[irq][key] = deque(tuple(), bufferlen)
 
 
-#
+# TODO
 # def _irq_gatts_read_request(data):
 #     # A central has issued a read. Note: this is a hard IRQ.
 #     # Return None to deny the read.
@@ -149,6 +149,7 @@ def wait_for_event(irq, key, timeout_ms):
 
 _ble = BLE()
 
+config = _ble.config
 gap_advertise = _ble.gap_advertise
 gatts_register_services = _ble.gatts_register_services
 gatts_read = _ble.gatts_read
@@ -318,7 +319,7 @@ def on_gattc_indicate(callback):
     _register_callback(_IRQ_GATTC_INDICATE, callback)
     return callback
 
-#
+# TODO
 # def on_gatts_read_request(conn_handle):
 #     _add_callback(_callback_gatts_read_request, conn_handle,
 #         gatts_read_request_callback)
