@@ -1,7 +1,7 @@
 from collections import deque
 import time
 
-from bluetooth import BLE
+from bluetooth import BLE, UUID
 import machine
 from micropython import const, schedule
 
@@ -98,7 +98,7 @@ def _irq(event, data):
         # Called for each characteristic found by gattc_discover_services().
         conn_handle, def_handle, value_handle, properties, uuid = data
         key = conn_handle
-        data = def_handle, value_handle, properties, uuid
+        data = def_handle, value_handle, properties, UUID(uuid)
     elif event == _IRQ_GATTC_CHARACTERISTICS_COMPLETE:
         # Called once service discovery is complete.
         conn_handle, status = data
@@ -113,7 +113,7 @@ def _irq(event, data):
         # Called for each service found by gattc_discover_services().
         conn_handle, start_handle, end_handle, uuid = data
         key = conn_handle
-        data = start_handle, end_handle, uuid
+        data = start_handle, end_handle, UUID(uuid)
     elif event == _IRQ_GATTC_SERVICES_COMPLETE:
         # Called once service discovery is complete.
         # Note: Status will be zero on success, implementation-specific value otherwise.
@@ -124,7 +124,7 @@ def _irq(event, data):
         # Called for each descriptor found by gattc_discover_descriptors().
         conn_handle, dsc_handle, uuid = data
         key = conn_handle
-        data = dsc_handle, uuid
+        data = dsc_handle, UUID(uuid)
     elif event == _IRQ_GATTC_DESCRIPTORS_COMPLETE:
         # Called once service discovery is complete.
         # Note: Status will be zero on success, implementation-specific value otherwise.
