@@ -1,7 +1,7 @@
 from collections import deque
 import time
 
-from bluetooth import BLE
+from bluetooth import BLE, UUID
 import machine
 from micropython import const, schedule
 
@@ -69,6 +69,7 @@ _events = {
     _IRQ_GATTC_DESCRIPTOR_RESULT: {},
     _IRQ_GATTC_DESCRIPTORS_COMPLETE: {},
     _IRQ_GATTC_READ_RESULT: {},
+    _IRQ_GATTC_READ_STATUS: {},
     _IRQ_GATTC_WRITE_STATUS: {},
 }
 
@@ -86,73 +87,89 @@ _callbacks = {
 def _irq(event, data):
     if event in (
         _IRQ_CENTRAL_CONNECT,
-        _IRQ_CENTRAL_DISCONNECT,
-        _IRQ_GATTS_WRITE,
-        _IRQ_GATTC_NOTIFY,
-        _IRQ_GATTC_INDICATE,
-        _IRQ_PERIPHERAL_DISCONNECT
+        _IRQ_PERIPHERAL_DISCONNECT,
+        _IRQ_CENTRAL_DISCONNECT
     ):
+        # A central has connected to this peripheral.
+        # A central has disconnected from this peripheral.
+        # A central has disconnected from this peripheral.
+        conn_handle, addr_type, addr = data
+        data = conn_handle, addr_type, bytes(addr)
         _callback(event, data)
-        return
-    elif event == _IRQ_GATTC_CHARACTERISTIC_RESULT:
-        # Called for each characteristic found by gattc_discover_services().
-        conn_handle, def_handle, value_handle, properties, uuid = data
-        key = conn_handle
-        data = def_handle, value_handle, properties, uuid
-    elif event == _IRQ_GATTC_CHARACTERISTICS_COMPLETE:
-        # Called once service discovery is complete.
-        conn_handle, status = data
-        key = conn_handle
-        data = status
+    elif event == _IRQ_GATTS_WRITE:
+        # A central has written to this characteristic or descriptor.
+        # conn_handle, attr_handle = data
+        _callback(event, data)
+    elif event in (_IRQ_GATTC_NOTIFY, _IRQ_GATTC_INDICATE):
+        # A peripheral has sent a notify request.
+        # A peripheral has sent an indicate request.
+        conn_handle, value_handle, notify_data = data
+        data = conn_handle, value_handle, bytes(notify_data)
+        _callback(event, data)
+    elif event == _IRQ_SCAN_RESULT:
+        # A single scan result.
+        addr_type, addr, adv_type, rssi, adv_data = data
+        data = addr_type, bytes(addr), adv_type, rssi, bytes(adv_data)
+        _event(event, data, None)
+    elif event == _IRQ_SCAN_COMPLETE:
+        # A single scan result.
+        _event(event, None, None)
     elif event == _IRQ_PERIPHERAL_CONNECT:
         # A successful gap_connect().
         conn_handle, addr_type, addr = data
-        key = addr_type, addr
-        data = conn_handle
+        key = addr_type, bytes(addr)
+        _event(event, conn_handle, key)
     elif event == _IRQ_GATTC_SERVICE_RESULT:
         # Called for each service found by gattc_discover_services().
         conn_handle, start_handle, end_handle, uuid = data
-        key = conn_handle
-        data = start_handle, end_handle, uuid
+        data = start_handle, end_handle, UUID(uuid)
+        _event(event, data, conn_handle)
     elif event == _IRQ_GATTC_SERVICES_COMPLETE:
         # Called once service discovery is complete.
         # Note: Status will be zero on success, implementation-specific value otherwise.
         conn_handle, status = data
-        key = conn_handle
-        data = status
+        _event(event, status, conn_handle)
+    elif event == _IRQ_GATTC_CHARACTERISTIC_RESULT:
+        # Called for each characteristic found by gattc_discover_services().
+        conn_handle, def_handle, value_handle, properties, uuid = data
+        data = def_handle, value_handle, properties, UUID(uuid)
+        _event(event, data, conn_handle)
+    elif event == _IRQ_GATTC_CHARACTERISTICS_COMPLETE:
+        # Called once service discovery is complete.
+        conn_handle, status = data
+        _event(event, status, conn_handle)
     elif event == _IRQ_GATTC_DESCRIPTOR_RESULT:
         # Called for each descriptor found by gattc_discover_descriptors().
         conn_handle, dsc_handle, uuid = data
-        key = conn_handle
-        data = dsc_handle, uuid
+        data = dsc_handle, UUID(uuid)
+        _event(event, data, conn_handle)
     elif event == _IRQ_GATTC_DESCRIPTORS_COMPLETE:
         # Called once service discovery is complete.
         # Note: Status will be zero on success, implementation-specific value otherwise.
         conn_handle, status = data
-        key = conn_handle
-        data = status
+        _event(event, status, conn_handle)
     elif event == _IRQ_GATTC_READ_RESULT:
         # A gattc_read() has completed.
         conn_handle, value_handle, char_data = data
         key = conn_handle, value_handle
-        data = char_data
+        _event(event, bytes(char_data), key)
     elif event == _IRQ_GATTC_READ_STATUS:
         # A gattc_read() has completed.
         # Note: The value_handle will be zero on btstack (but present on NimBLE).
         # Note: Status will be zero on success, implementation-specific value otherwise.
-        conn_handle, value_handle, status = data
-        key = conn_handle, value_handle
-        data = status
+        # conn_handle, value_handle, status = data
+        # key = conn_handle, value_handle
+        # data = status
+        return  # TODO
     elif event == _IRQ_GATTC_WRITE_STATUS:
         # A gattc_write() has completed.
         # Note: The value_handle will be zero on btstack (but present on NimBLE).
         # Note: Status will be zero on success, implementation-specific value otherwise.
         conn_handle, value_handle, status = data
         key = conn_handle, value_handle
-        data = status
+        _event(event, status, key)
     else:
-        key = None
-    _event(event, data, key)
+        return
 
 
 class EventTimeoutError(Exception):
