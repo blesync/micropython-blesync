@@ -77,6 +77,9 @@ _callbacks = {
 
 
 def _irq(event, data):
+    # TODO
+    #  https://github.com/micropython/micropython/pull/5906
+    #  or https://github.com/micropython/micropython/pull/6033
     if event in (
         _IRQ_CENTRAL_CONNECT,
         _IRQ_CENTRAL_DISCONNECT,
@@ -158,11 +161,31 @@ gatts_set_buffer = _ble.gatts_set_buffer
 gap_disconnect = _ble.gap_disconnect
 
 
+def _results_until_complete(event_result, event_complete, key, timeout_ms, func, *args):
+    start_time = time.ticks_ms()
+
+    _register_event(event_result, key, bufferlen=100)
+    _register_event(event_complete, key)
+
+    func(*args)
+
+    results_queue = _events[event_result][key]
+    complete_queue = _events[event_complete][key]
+
+    while True:
+        while results_queue:
+            yield results_queue.popleft()
+
+        if complete_queue:
+            complete_queue.popleft()
+            return
+        _maybe_raise_timeout(timeout_ms, start_time)
+        machine.idle()
+
+
 def gap_scan(duration_ms, interval_us=None, window_us=None, timeout_ms=None):
     assert not (interval_us is None and window_us is not None), \
         "Argument window_us has to be specified if interval_us is specified"
-
-    start_time = time.ticks_ms()
 
     args = []
     if interval_us is not None:
@@ -170,22 +193,15 @@ def gap_scan(duration_ms, interval_us=None, window_us=None, timeout_ms=None):
         if window_us is not None:
             args.append(window_us)
 
-    _register_event(_IRQ_SCAN_RESULT, None, bufferlen=100)
-    _register_event(_IRQ_SCAN_COMPLETE, None)
-    _ble.gap_scan(duration_ms, *args)
-
-    scan_events_queue = _events[_IRQ_SCAN_RESULT][None]
-    scan_complete_queue = _events[_IRQ_SCAN_COMPLETE][None]
-
-    while True:
-        while scan_events_queue:
-            yield scan_events_queue.popleft()
-
-        if scan_complete_queue:
-            scan_complete_queue.popleft()
-            return
-        _maybe_raise_timeout(timeout_ms, start_time)
-        machine.idle()
+    yield from _results_until_complete(
+        _IRQ_SCAN_RESULT,
+        _IRQ_SCAN_COMPLETE,
+        None,
+        timeout_ms,
+        _ble.gap_scan,
+        duration_ms,
+        *args
+    )
 
 
 def gatts_notify(conn_handle, handle, data=None):
@@ -208,6 +224,10 @@ def gap_connect(addr_type, addr, scan_duration_ms=2000, timeout_ms=None):
 
 
 def gattc_discover_services(conn_handle, timeout_ms=None):
+    # TODO use and _results_until_complete after
+    #  https://github.com/micropython/micropython/pull/6033
+    #  or https://github.com/micropython/micropython/pull/5906
+
     start_time = time.ticks_ms()
     _register_event(_IRQ_GATTC_SERVICE_RESULT, conn_handle, bufferlen=100)
     _ble.gattc_discover_services(conn_handle)
@@ -229,6 +249,10 @@ def gattc_discover_characteristics(
     end_handle,
     timeout_ms=None
 ):
+    # TODO use and _results_until_complete after
+    #  https://github.com/micropython/micropython/pull/6033
+    #  or https://github.com/micropython/micropython/pull/5906
+
     start_time = time.ticks_ms()
     _register_event(
         _IRQ_GATTC_CHARACTERISTIC_RESULT,
@@ -250,7 +274,10 @@ def gattc_discover_characteristics(
 
 
 def gattc_discover_descriptors(conn_handle, start_handle, end_handle):
-    # TODO
+    # TODO use and _results_until_complete after
+    #  https://github.com/micropython/micropython/pull/6033
+    #  or https://github.com/micropython/micropython/pull/5906
+
     # _ble.gattc_discover_descriptors(conn_handle, start_handle, end_handle)
     raise NotImplementedError
 
