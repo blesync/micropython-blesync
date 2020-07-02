@@ -179,7 +179,7 @@ def _irq(event, data):
         return
 
 
-def wait_for_event(irq, key, event_exception_class=None):
+def _wait_for_event(irq, key, event_exception_class=None):
     event_queue = _events[irq][key]
 
     while not event_queue:
@@ -191,7 +191,7 @@ def wait_for_event(irq, key, event_exception_class=None):
     return event_result
 
 
-def wait_for_disjunct_events(irq_1, key_1, irq_2, key_2):
+def _wait_for_disjunct_events(irq_1, key_1, irq_2, key_2):
     event_queue_1 = _events[irq_1][key_1]
     event_queue_2 = _events[irq_2][key_2]
 
@@ -239,7 +239,21 @@ def _results_until_done(
 
 
 def gap_scan(duration_ms, interval_us=None, window_us=None):
-    # TODO solve infinite scan (duration_ms=0) and stop scan (duration_ms=None)
+    """
+    if interrupted during the iteration the close() has to be called
+    see https://github.com/micropython/micropython/issues/6183
+    Example:
+        scan_iter = scan(
+            duration_ms=duration_ms,
+            interval_us=interval_us,
+            window_us=window_us,
+        )
+
+        for device in scan_iter:
+            scan_iter.close()
+            return device
+    """
+
     assert not (interval_us is None and window_us is not None), \
         "Argument window_us has to be specified if interval_us is specified"
 
@@ -248,10 +262,8 @@ def gap_scan(duration_ms, interval_us=None, window_us=None):
         args.append(interval_us)
         if window_us is not None:
             args.append(window_us)
-
-    # TODO yield from https://github.com/micropython/micropython/issues/6183
-    return list(
-        _results_until_done(
+    try:
+        yield from _results_until_done(
             _IRQ_SCAN_RESULT,
             _IRQ_SCAN_DONE,
             None,
@@ -259,7 +271,9 @@ def gap_scan(duration_ms, interval_us=None, window_us=None):
             func=_ble.gap_scan,
             args=args
         )
-    )
+    except GeneratorExit:
+        _ble.gap_scan(None)
+        _wait_for_event(_IRQ_SCAN_DONE, None)
 
 
 def gatts_notify(conn_handle, handle, data=None):
@@ -291,7 +305,7 @@ def gap_connect(addr_type, addr, timeout_ms=2000):
     _register_event(_IRQ_PERIPHERAL_CONNECT, (addr_type, addr))
     _register_event(_IRQ_PERIPHERAL_DISCONNECT, None)
     _ble.gap_connect(addr_type, addr, timeout_ms)
-    conn_handle, _ = wait_for_disjunct_events(
+    conn_handle, _ = _wait_for_disjunct_events(
         _IRQ_PERIPHERAL_CONNECT, (addr_type, addr),
         _IRQ_PERIPHERAL_DISCONNECT, None
     )
@@ -362,7 +376,7 @@ def gattc_read(conn_handle, value_handle):
     # conn_handle, value_handle, char_data
     _register_event(_IRQ_GATTC_READ_RESULT, (conn_handle, value_handle))
     _ble.gattc_read(conn_handle, value_handle)
-    return wait_for_event(
+    return _wait_for_event(
         _IRQ_GATTC_READ_RESULT,
         (conn_handle, value_handle),
         GattcReadError
@@ -379,7 +393,7 @@ def gattc_write(conn_handle, value_handle, data, ack=False):
     _register_event(_IRQ_GATTC_WRITE_DONE, (conn_handle, value_handle))
     _ble.gattc_write(conn_handle, value_handle, data, ack)
     if ack:
-        return wait_for_event(
+        return _wait_for_event(
             _IRQ_GATTC_WRITE_DONE,
             (conn_handle, value_handle),
             GattcWriteError
