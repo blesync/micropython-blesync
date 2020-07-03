@@ -240,7 +240,7 @@ def _results_until_done(
 
 def gap_scan(duration_ms, interval_us=None, window_us=None):
     """
-    if interrupted during the iteration the close() has to be called
+    if it is interrupted during the iteration, the close() has to be called
     see https://github.com/micropython/micropython/issues/6183
     Example:
         scan_iter = scan(
